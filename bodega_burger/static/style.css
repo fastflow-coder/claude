@@ -1,0 +1,149 @@
+/* Bodega Burger — Dashboard Styles */
+
+:root {
+  --sidebar-width: 220px;
+  --sidebar-bg: #1a1a2e;
+  --topbar-height: 54px;
+}
+
+body {
+  background: #f4f6fb;
+  font-family: "Segoe UI", system-ui, sans-serif;
+  min-height: 100vh;
+}
+
+/* ── Sidebar ─────────────────────────────────── */
+
+#sidebar {
+  width: var(--sidebar-width);
+  min-height: 100vh;
+  background: var(--sidebar-bg);
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 100;
+  overflow-y: auto;
+}
+
+#sidebar .nav-link {
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 0.875rem;
+  transition: background 0.15s;
+}
+
+#sidebar .nav-link:hover,
+#sidebar .nav-link.active {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+#sidebar .brand {
+  font-size: 1.1rem;
+}
+
+/* ── Main content ────────────────────────────── */
+
+#main-content {
+  margin-left: var(--sidebar-width);
+  min-height: 100vh;
+}
+
+.topbar {
+  background: #ffffff;
+  height: var(--topbar-height);
+  position: sticky;
+  top: 0;
+  z-index: 50;
+}
+
+.content-area {
+  min-height: calc(100vh - var(--topbar-height));
+}
+
+/* ── KPI Cards ───────────────────────────────── */
+
+.kpi-card {
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+
+.kpi-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08) !important;
+}
+
+.kpi-icon {
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+/* ── Cards ───────────────────────────────────── */
+
+.card {
+  border-radius: 12px;
+}
+
+.card-header {
+  border-radius: 12px 12px 0 0 !important;
+  font-size: 0.9rem;
+  padding: 12px 16px;
+}
+
+/* ── Tables ──────────────────────────────────── */
+
+.table th {
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #6c757d;
+  padding: 10px 16px;
+}
+
+.table td {
+  padding: 10px 16px;
+  vertical-align: middle;
+  font-size: 0.875rem;
+}
+
+/* ── Badges ──────────────────────────────────── */
+
+.badge {
+  font-weight: 500;
+  font-size: 0.7rem;
+  padding: 4px 8px;
+  border-radius: 6px;
+}
+
+/* ── Forms ───────────────────────────────────── */
+
+.form-control,
+.form-select {
+  border-radius: 8px;
+  font-size: 0.875rem;
+}
+
+.btn {
+  border-radius: 8px;
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+/* ── Responsive ──────────────────────────────── */
+
+@media (max-width: 768px) {
+  #sidebar {
+    width: 100%;
+    min-height: auto;
+    position: relative;
+  }
+  #main-content {
+    margin-left: 0;
+  }
+  #wrapper {
+    flex-direction: column;
+  }
+}

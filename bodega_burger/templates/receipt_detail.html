@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{% block title %}Receipt #{{ receipt.id }}{% endblock %}
+{% block title_text %}Receipt #{{ receipt.id }}{% endblock %}
+
+{% block content %}
+
+<div class="mb-3">
+  <a href="/receipts" class="btn btn-sm btn-outline-secondary">
+    <i class="bi bi-arrow-left me-1"></i> Back to Receipts
+  </a>
+</div>
+
+<div class="row g-3">
+
+  <!-- Receipt info -->
+  <div class="col-md-4">
+    <div class="card border-0 shadow-sm">
+      <div class="card-header bg-transparent fw-semibold">
+        <i class="bi bi-receipt me-2 text-primary"></i>Receipt Details
+      </div>
+      <div class="card-body">
+        <dl class="row mb-0 small">
+          <dt class="col-5 text-muted">Vendor</dt>
+          <dd class="col-7 fw-semibold">{{ receipt.vendor }}</dd>
+
+          <dt class="col-5 text-muted">Date</dt>
+          <dd class="col-7">{{ receipt.date }}</dd>
+
+          <dt class="col-5 text-muted">Category</dt>
+          <dd class="col-7">
+            <span class="badge bg-secondary">{{ receipt.category }}</span>
+          </dd>
+
+          <dt class="col-5 text-muted">Tax</dt>
+          <dd class="col-7">${{ "%.2f"|format(receipt.tax|float) }}</dd>
+
+          <dt class="col-5 text-muted">Total</dt>
+          <dd class="col-7 fw-bold fs-6 text-success">${{ "%.2f"|format(receipt.total|float) }}</dd>
+
+          <dt class="col-5 text-muted">Processed</dt>
+          <dd class="col-7 text-muted">{{ receipt.processed_at.strftime('%Y-%m-%d %H:%M') if receipt.processed_at else '—' }}</dd>
+
+          {% if receipt.image_path %}
+          <dt class="col-5 text-muted">Image</dt>
+          <dd class="col-7 text-muted small">{{ receipt.image_path.split('/')[-1] }}</dd>
+          {% endif %}
+        </dl>
+      </div>
+    </div>
+  </div>
+
+  <!-- Items -->
+  <div class="col-md-8">
+    <div class="card border-0 shadow-sm">
+      <div class="card-header bg-transparent fw-semibold">
+        <i class="bi bi-list-ul me-2 text-success"></i>Items ({{ receipt.items|length }})
+      </div>
+      <div class="card-body p-0">
+        {% if receipt.items %}
+        <table class="table table-sm table-hover mb-0">
+          <thead class="table-light">
+            <tr>
+              <th>Item</th>
+              <th>Stock Category</th>
+              <th class="text-center">Qty</th>
+              <th class="text-end">Unit Price</th>
+              <th class="text-end">Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for item in receipt.items %}
+            <tr>
+              <td class="fw-semibold">{{ item.name }}</td>
+              <td><span class="badge bg-info text-dark">{{ item.stock_category }}</span></td>
+              <td class="text-center">{{ item.quantity }}</td>
+              <td class="text-end">${{ "%.2f"|format(item.unit_price|float) }}</td>
+              <td class="text-end fw-semibold">${{ "%.2f"|format(item.total_price|float) }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+          <tfoot class="table-light">
+            <tr>
+              <td colspan="4" class="text-end fw-semibold">Total</td>
+              <td class="text-end fw-bold">${{ "%.2f"|format(receipt.total|float) }}</td>
+            </tr>
+          </tfoot>
+        </table>
+        {% else %}
+        <div class="p-4 text-center text-muted">No items recorded.</div>
+        {% endif %}
+      </div>
+    </div>
+
+    {% if receipt.raw_text %}
+    <div class="card border-0 shadow-sm mt-3">
+      <div class="card-header bg-transparent fw-semibold">
+        <i class="bi bi-file-text me-2 text-secondary"></i>Raw AI Response
+      </div>
+      <div class="card-body">
+        <pre class="small text-muted mb-0" style="white-space:pre-wrap;max-height:200px;overflow-y:auto">{{ receipt.raw_text }}</pre>
+      </div>
+    </div>
+    {% endif %}
+  </div>
+
+</div>
+{% endblock %}

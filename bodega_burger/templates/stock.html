@@ -1,0 +1,113 @@
+{% extends "base.html" %}
+{% block title %}Stock{% endblock %}
+{% block title_text %}Inventory{% endblock %}
+
+{% block content %}
+
+{% if low_stock_count > 0 %}
+<div class="alert alert-warning d-flex align-items-center mb-4">
+  <i class="bi bi-exclamation-triangle-fill me-2 fs-5"></i>
+  <strong>{{ low_stock_count }} item(s) below minimum threshold.</strong>
+  &nbsp;Review and restock as needed.
+</div>
+{% endif %}
+
+<div class="row g-3">
+
+  <!-- Inventory table -->
+  <div class="col-md-8">
+    <div class="card border-0 shadow-sm">
+      <div class="card-header bg-transparent fw-semibold">
+        <i class="bi bi-box-seam me-2 text-primary"></i>Current Inventory
+      </div>
+      <div class="card-body p-0">
+        {% if stock_items %}
+        <table class="table table-hover mb-0">
+          <thead class="table-light">
+            <tr>
+              <th>Item</th>
+              <th>Category</th>
+              <th class="text-center">Quantity</th>
+              <th>Unit</th>
+              <th class="text-center">Min Threshold</th>
+              <th class="text-center">Status</th>
+              <th>Last Updated</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for item in stock_items %}
+            <tr class="{{ 'table-warning' if item.id in low_ids else '' }}">
+              <td class="fw-semibold">{{ item.item_name }}</td>
+              <td><span class="badge bg-secondary">{{ item.category }}</span></td>
+              <td class="text-center">{{ "%.1f"|format(item.current_quantity|float) }}</td>
+              <td class="text-muted small">{{ item.unit }}</td>
+              <td class="text-center text-muted small">
+                {% if item.min_threshold|float > 0 %}
+                  {{ "%.1f"|format(item.min_threshold|float) }}
+                {% else %}
+                  —
+                {% endif %}
+              </td>
+              <td class="text-center">
+                {% if item.id in low_ids %}
+                  <span class="badge bg-danger">LOW</span>
+                {% else %}
+                  <span class="badge bg-success">OK</span>
+                {% endif %}
+              </td>
+              <td class="text-muted small">
+                {{ item.last_updated.strftime('%Y-%m-%d') if item.last_updated else '—' }}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% else %}
+        <div class="p-5 text-center text-muted">
+          <i class="bi bi-box fs-1 d-block mb-3"></i>
+          No stock items yet. Upload receipt photos via Telegram bot.
+        </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <!-- Adjust stock form -->
+  <div class="col-md-4">
+    <div class="card border-0 shadow-sm">
+      <div class="card-header bg-transparent fw-semibold">
+        <i class="bi bi-pencil-square me-2 text-warning"></i>Adjust Stock
+      </div>
+      <div class="card-body">
+        <form method="post" action="/stock/update">
+          <div class="mb-3">
+            <label class="form-label small">Item Name</label>
+            <input type="text" name="item_name" class="form-control form-control-sm"
+                   placeholder="e.g. beef patties" required list="stock-items">
+            <datalist id="stock-items">
+              {% for item in stock_items %}
+              <option value="{{ item.item_name }}">
+              {% endfor %}
+            </datalist>
+          </div>
+          <div class="mb-3">
+            <label class="form-label small">Quantity Change</label>
+            <input type="number" name="quantity_delta" class="form-control form-control-sm"
+                   step="0.01" required placeholder="e.g. +10 or -5">
+            <div class="form-text">Use negative to reduce stock</div>
+          </div>
+          <div class="mb-3">
+            <label class="form-label small">Unit (optional)</label>
+            <input type="text" name="unit" class="form-control form-control-sm"
+                   placeholder="kg, units, boxes...">
+          </div>
+          <button type="submit" class="btn btn-warning btn-sm w-100">
+            <i class="bi bi-save me-1"></i> Update Stock
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+</div>
+{% endblock %}

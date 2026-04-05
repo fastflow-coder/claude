@@ -1,0 +1,180 @@
+{% extends "base.html" %}
+{% block title %}Reports{% endblock %}
+{% block title_text %}Monthly P&L Report{% endblock %}
+
+{% block content %}
+
+<!-- Month selector -->
+<div class="card border-0 shadow-sm mb-4">
+  <div class="card-body py-2">
+    <form method="get" class="row g-2 align-items-end">
+      <div class="col-auto">
+        <label class="form-label small mb-1">Year</label>
+        <input type="number" name="year" class="form-control form-control-sm" style="width:90px"
+               value="{{ year }}" min="2020" max="2099">
+      </div>
+      <div class="col-auto">
+        <label class="form-label small mb-1">Month</label>
+        <select name="month" class="form-select form-select-sm" style="width:130px">
+          {% for m in range(1, 13) %}
+          <option value="{{ m }}" {{ 'selected' if m == month else '' }}>
+            {{ ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][m-1] }}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-auto">
+        <button type="submit" class="btn btn-primary btn-sm">
+          <i class="bi bi-search me-1"></i> View
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<h5 class="mb-3 fw-semibold">{{ month_name }}</h5>
+
+<!-- P&L Summary cards -->
+<div class="row g-3 mb-4">
+  <div class="col-md-4">
+    <div class="card border-0 shadow-sm">
+      <div class="card-body text-center">
+        <div class="text-muted small mb-1">Total Revenue</div>
+        <div class="fs-3 fw-bold text-success">${{ "%.2f"|format(pl.revenue) }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="card border-0 shadow-sm">
+      <div class="card-body text-center">
+        <div class="text-muted small mb-1">Total Expenses</div>
+        <div class="fs-3 fw-bold text-danger">${{ "%.2f"|format(pl.total_expenses) }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="card border-0 shadow-sm">
+      <div class="card-body text-center">
+        <div class="text-muted small mb-1">Net Profit</div>
+        {% set profit = pl.net_profit %}
+        <div class="fs-3 fw-bold {{ 'text-primary' if profit >= 0 else 'text-danger' }}">
+          {{ '+' if profit >= 0 else '' }}${{ "%.2f"|format(profit) }}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3">
+
+  <!-- Expense breakdown -->
+  <div class="col-md-5">
+    <div class="card border-0 shadow-sm">
+      <div class="card-header bg-transparent fw-semibold">
+        <i class="bi bi-pie-chart me-2 text-danger"></i>Expenses by Category
+      </div>
+      <div class="card-body">
+        {% if pl.expenses_by_category %}
+        <canvas id="pieChart" height="200"></canvas>
+        <table class="table table-sm mt-3 mb-0 small">
+          <tbody>
+            {% for cat, amt in pl.expenses_by_category.items()|sort(attribute='1', reverse=True) %}
+            <tr>
+              <td>{{ cat|capitalize }}</td>
+              <td class="text-end fw-semibold">${{ "%.2f"|format(amt) }}</td>
+              <td class="text-end text-muted">
+                {{ "%.0f"|format(amt / pl.total_expenses * 100 if pl.total_expenses > 0 else 0) }}%
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+          <tfoot class="table-light">
+            <tr>
+              <td class="fw-bold">Total</td>
+              <td class="text-end fw-bold">${{ "%.2f"|format(pl.total_expenses) }}</td>
+              <td></td>
+            </tr>
+          </tfoot>
+        </table>
+        {% else %}
+        <div class="text-center text-muted py-4">
+          <i class="bi bi-inbox fs-2 d-block mb-2"></i>No expenses recorded for this period.
+        </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <!-- Revenue vs Expenses bar chart -->
+  <div class="col-md-7">
+    <div class="card border-0 shadow-sm">
+      <div class="card-header bg-transparent fw-semibold">
+        <i class="bi bi-bar-chart me-2 text-primary"></i>Revenue vs Expenses
+      </div>
+      <div class="card-body">
+        <canvas id="barChart" height="220"></canvas>
+      </div>
+    </div>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const expenseCategories = {{ pl.expenses_by_category.keys()|list|tojson }};
+const expenseAmounts    = {{ pl.expenses_by_category.values()|list|tojson }};
+const revenue           = {{ pl.revenue }};
+const totalExpenses     = {{ pl.total_expenses }};
+const netProfit         = {{ pl.net_profit }};
+
+// Pie chart — expense breakdown
+{% if pl.expenses_by_category %}
+const pieCtx = document.getElementById("pieChart").getContext("2d");
+new Chart(pieCtx, {
+  type: "doughnut",
+  data: {
+    labels: expenseCategories.map(c => c.charAt(0).toUpperCase() + c.slice(1)),
+    datasets: [{
+      data: expenseAmounts,
+      backgroundColor: [
+        "#ef4444","#f97316","#eab308","#22c55e","#3b82f6","#a855f7","#ec4899"
+      ],
+      borderWidth: 2,
+    }]
+  },
+  options: {
+    plugins: { legend: { position: "bottom", labels: { font: { size: 11 } } } },
+    cutout: "60%",
+  }
+});
+{% endif %}
+
+// Bar chart — Revenue vs Expenses vs Profit
+const barCtx = document.getElementById("barChart").getContext("2d");
+new Chart(barCtx, {
+  type: "bar",
+  data: {
+    labels: ["Revenue", "Expenses", "Net Profit"],
+    datasets: [{
+      data: [revenue, totalExpenses, netProfit],
+      backgroundColor: [
+        "rgba(34,197,94,0.7)",
+        "rgba(239,68,68,0.7)",
+        netProfit >= 0 ? "rgba(59,130,246,0.7)" : "rgba(239,68,68,0.7)",
+      ],
+      borderRadius: 6,
+    }]
+  },
+  options: {
+    plugins: { legend: { display: false } },
+    scales: {
+      y: {
+        ticks: { callback: v => "$" + v.toLocaleString() },
+        grid: { color: "rgba(0,0,0,0.05)" }
+      }
+    }
+  }
+});
+</script>
+{% endblock %}

@@ -1,0 +1,167 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block title_text %}Dashboard{% endblock %}
+
+{% block content %}
+
+<!-- KPI Cards -->
+<div class="row g-3 mb-4">
+  <div class="col-md-3">
+    <div class="card kpi-card border-0 shadow-sm h-100">
+      <div class="card-body">
+        <div class="d-flex align-items-center mb-2">
+          <div class="kpi-icon bg-success-subtle text-success rounded-3 p-2 me-3">
+            <i class="bi bi-graph-up fs-5"></i>
+          </div>
+          <span class="text-muted small">Weekly Revenue</span>
+        </div>
+        <div class="fs-4 fw-bold text-success">${{ "%.2f"|format(summary.weekly_revenue) }}</div>
+        <div class="text-muted small mt-1">Last 7 days</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-md-3">
+    <div class="card kpi-card border-0 shadow-sm h-100">
+      <div class="card-body">
+        <div class="d-flex align-items-center mb-2">
+          <div class="kpi-icon bg-danger-subtle text-danger rounded-3 p-2 me-3">
+            <i class="bi bi-receipt fs-5"></i>
+          </div>
+          <span class="text-muted small">Weekly Expenses</span>
+        </div>
+        <div class="fs-4 fw-bold text-danger">${{ "%.2f"|format(summary.weekly_expenses) }}</div>
+        <div class="text-muted small mt-1">{{ summary.receipts_this_week }} receipt(s)</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-md-3">
+    <div class="card kpi-card border-0 shadow-sm h-100">
+      <div class="card-body">
+        <div class="d-flex align-items-center mb-2">
+          <div class="kpi-icon bg-primary-subtle text-primary rounded-3 p-2 me-3">
+            <i class="bi bi-wallet2 fs-5"></i>
+          </div>
+          <span class="text-muted small">Net Profit</span>
+        </div>
+        {% set profit = summary.weekly_profit %}
+        <div class="fs-4 fw-bold {{ 'text-primary' if profit >= 0 else 'text-danger' }}">
+          {{ '+' if profit >= 0 else '' }}${{ "%.2f"|format(profit) }}
+        </div>
+        <div class="text-muted small mt-1">Revenue − Expenses</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-md-3">
+    <div class="card kpi-card border-0 shadow-sm h-100">
+      <div class="card-body">
+        <div class="d-flex align-items-center mb-2">
+          <div class="kpi-icon bg-warning-subtle text-warning rounded-3 p-2 me-3">
+            <i class="bi bi-exclamation-triangle fs-5"></i>
+          </div>
+          <span class="text-muted small">Low Stock Alerts</span>
+        </div>
+        <div class="fs-4 fw-bold {{ 'text-warning' if summary.low_stock_count > 0 else 'text-success' }}">
+          {{ summary.low_stock_count }}
+        </div>
+        <div class="text-muted small mt-1">
+          <a href="/stock" class="text-muted">View inventory</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Quick Income Form + Recent Receipts -->
+<div class="row g-3">
+
+  <!-- Quick income entry -->
+  <div class="col-md-4">
+    <div class="card border-0 shadow-sm">
+      <div class="card-header bg-transparent fw-semibold">
+        <i class="bi bi-plus-circle me-2 text-success"></i>Record Sales
+      </div>
+      <div class="card-body">
+        <form method="post" action="/income/add">
+          <div class="mb-3">
+            <label class="form-label small">Date</label>
+            <input type="date" name="date" class="form-control form-control-sm"
+                   value="{{ now.strftime('%Y-%m-%d') if now else '' }}" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label small">Amount (CAD)</label>
+            <div class="input-group input-group-sm">
+              <span class="input-group-text">$</span>
+              <input type="number" name="amount" class="form-control" step="0.01" min="0" required placeholder="0.00">
+            </div>
+          </div>
+          <div class="mb-3">
+            <label class="form-label small">Source</label>
+            <select name="source" class="form-select form-select-sm">
+              <option value="daily_sales">Daily Sales</option>
+              <option value="catering">Catering</option>
+              <option value="other">Other</option>
+            </select>
+          </div>
+          <div class="mb-3">
+            <label class="form-label small">Note (optional)</label>
+            <input type="text" name="note" class="form-control form-control-sm" placeholder="e.g. Saturday lunch rush">
+          </div>
+          <button type="submit" class="btn btn-success btn-sm w-100">
+            <i class="bi bi-plus-lg me-1"></i> Add Income
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- Recent receipts -->
+  <div class="col-md-8">
+    <div class="card border-0 shadow-sm">
+      <div class="card-header bg-transparent d-flex align-items-center">
+        <span class="fw-semibold"><i class="bi bi-receipt me-2 text-primary"></i>Recent Receipts</span>
+        <a href="/receipts" class="ms-auto btn btn-sm btn-outline-secondary">View all</a>
+      </div>
+      <div class="card-body p-0">
+        {% if recent_receipts %}
+        <table class="table table-hover mb-0 small">
+          <thead class="table-light">
+            <tr>
+              <th>Date</th>
+              <th>Vendor</th>
+              <th>Category</th>
+              <th class="text-end">Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for r in recent_receipts %}
+            <tr onclick="location.href='/receipts/{{ r.id }}'" style="cursor:pointer">
+              <td>{{ r.date }}</td>
+              <td>{{ r.vendor }}</td>
+              <td><span class="badge bg-secondary">{{ r.category }}</span></td>
+              <td class="text-end fw-semibold">${{ "%.2f"|format(r.total|float) }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% else %}
+        <div class="p-4 text-center text-muted">
+          <i class="bi bi-inbox fs-2 d-block mb-2"></i>
+          No receipts yet. Send a photo to the Telegram bot to get started.
+        </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  // Set today's date in the form
+  document.querySelector('input[name="date"]').value = new Date().toLocaleDateString("en-CA");
+</script>
+{% endblock %}
