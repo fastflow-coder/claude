@@ -73,7 +73,8 @@
         <form method="post" action="/income/add">
           <div class="mb-3">
             <label class="form-label small">Date</label>
-            <input type="date" name="date" id="income-date" class="form-control form-control-sm" required>
+            <input type="date" name="date" id="income-date" class="form-control form-control-sm"
+                   value="{{ today }}" required>
           </div>
           <div class="mb-3">
             <label class="form-label small">Amount (CAD)</label>
@@ -106,8 +107,4 @@
 </div>
 {% endblock %}
 
-{% block scripts %}
-<script>
-  document.getElementById("income-date").value = new Date().toLocaleDateString("en-CA");
-</script>
-{% endblock %}
+{% block scripts %}{% endblock %}

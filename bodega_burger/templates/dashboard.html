@@ -87,8 +87,8 @@
         <form method="post" action="/income/add">
           <div class="mb-3">
             <label class="form-label small">Date</label>
-            <input type="date" name="date" class="form-control form-control-sm"
-                   value="{{ now.strftime('%Y-%m-%d') if now else '' }}" required>
+            <input type="date" name="date" id="income-date" class="form-control form-control-sm"
+                   value="{{ today }}" required>
           </div>
           <div class="mb-3">
             <label class="form-label small">Amount (CAD)</label>
@@ -159,9 +159,4 @@
 </div>
 {% endblock %}
 
-{% block scripts %}
-<script>
-  // Set today's date in the form
-  document.querySelector('input[name="date"]').value = new Date().toLocaleDateString("en-CA");
-</script>
-{% endblock %}
+{% block scripts %}{% endblock %}
