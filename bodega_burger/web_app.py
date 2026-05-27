@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime
+import json as _json
 from contextlib import asynccontextmanager
 from typing import Optional
 
@@ -18,14 +19,15 @@ from database import (
     add_income_entry,
     get_all_stock,
     get_income_entries,
-    get_low_stock_items,
     get_monthly_pl,
     get_receipt_by_id,
     get_receipts,
     get_recent_expenses,
     get_weekly_summary,
     init_db,
+    save_receipt,
     update_stock_quantity,
+    upsert_stock_from_dicts,
 )
 
 
@@ -35,7 +37,6 @@ from database import (
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Initialize database on startup."""
     await asyncio.to_thread(init_db)
     yield
 
@@ -43,14 +44,11 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Bodega Burger Dashboard", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
-
-# Add tojson filter (needed for Chart.js data in reports template)
-import json as _json
 templates.env.filters["tojson"] = lambda v: _json.dumps(v)
 
 
 # ---------------------------------------------------------------------------
-# Template base context
+# Base context helper
 # ---------------------------------------------------------------------------
 
 async def base_ctx(request: Request, **kwargs) -> dict:
@@ -92,12 +90,7 @@ async def receipts_page(
     offset = (page - 1) * limit
     receipts = await asyncio.to_thread(get_receipts, limit, offset, category, search)
     ctx = await base_ctx(request)
-    ctx.update({
-        "receipts": receipts,
-        "page": page,
-        "category": category or "",
-        "search": search or "",
-    })
+    ctx.update({"receipts": receipts, "page": page, "category": category or "", "search": search or ""})
     return templates.TemplateResponse("receipts.html", ctx)
 
 
@@ -113,13 +106,9 @@ async def receipt_detail(request: Request, receipt_id: int):
 
 @app.get("/stock", response_class=HTMLResponse)
 async def stock_page(request: Request):
-    items, low_items = await asyncio.gather(
-        asyncio.to_thread(get_all_stock),
-        asyncio.to_thread(get_low_stock_items),
-    )
-    low_ids = {i.id for i in low_items}
+    items = await asyncio.to_thread(get_all_stock)
     ctx = await base_ctx(request)
-    ctx.update({"stock_items": items, "low_ids": low_ids})
+    ctx["stock_items"] = items
     return templates.TemplateResponse("stock.html", ctx)
 
 
@@ -178,14 +167,15 @@ async def update_stock_form(
     quantity_delta: float = Form(...),
     unit: Optional[str] = Form(None),
 ):
-    result = await asyncio.to_thread(update_stock_quantity, item_name, quantity_delta, unit or None)
-    if result is None:
-        raise HTTPException(status_code=404, detail=f"Stock item '{item_name}' not found.")
+    # create_if_missing=True so manual entries always work
+    await asyncio.to_thread(
+        update_stock_quantity, item_name, quantity_delta, unit or None, True
+    )
     return RedirectResponse(url="/stock", status_code=303)
 
 
 # ---------------------------------------------------------------------------
-# JSON API endpoints
+# JSON API
 # ---------------------------------------------------------------------------
 
 class IncomePayload(BaseModel):
@@ -210,16 +200,14 @@ async def api_add_income(payload: IncomePayload):
     entry = await asyncio.to_thread(
         add_income_entry, date_val, payload.amount, payload.source, payload.note
     )
-    return {"id": entry.id, "status": "created"}
+    return {"id": entry["id"], "status": "created"}
 
 
 @app.post("/api/stock/update")
 async def api_update_stock(payload: StockUpdatePayload):
     result = await asyncio.to_thread(
-        update_stock_quantity, payload.item_name, payload.quantity_delta, payload.unit
+        update_stock_quantity, payload.item_name, payload.quantity_delta, payload.unit, True
     )
-    if result is None:
-        raise HTTPException(status_code=404, detail="Stock item not found")
     return result
 
 

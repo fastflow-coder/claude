@@ -24,13 +24,13 @@ class Receipt(Base):
     __tablename__ = "receipts"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    telegram_msg_id = Column(Integer, nullable=True)   # no unique — multiple NULLs allowed cleanly
+    telegram_msg_id = Column(Integer, nullable=True)
     image_path = Column(Text, nullable=True)
     vendor = Column(String(255), nullable=False)
     date = Column(Date, nullable=False)
     total = Column(Numeric(10, 2), nullable=False)
     tax = Column(Numeric(10, 2), default=0.0)
-    category = Column(String(50), nullable=False)  # food/beverage/supplies/utilities/other
+    category = Column(String(50), nullable=False)
     processed_at = Column(DateTime, default=_utcnow)
     raw_text = Column(Text, nullable=True)
 
@@ -38,7 +38,7 @@ class Receipt(Base):
         "ReceiptItem",
         back_populates="receipt",
         cascade="all, delete-orphan",
-        lazy="joined",   # always load items with receipt
+        lazy="joined",
     )
     expense = relationship("Expense", back_populates="receipt", uselist=False)
 
@@ -52,7 +52,7 @@ class ReceiptItem(Base):
     quantity = Column(Numeric(10, 3), nullable=False)
     unit_price = Column(Numeric(10, 2), nullable=False)
     total_price = Column(Numeric(10, 2), nullable=False)
-    stock_category = Column(String(50), nullable=False)  # meat/bread/produce/dairy/supplies/beverages/other
+    stock_category = Column(String(50), nullable=False)
 
     receipt = relationship("Receipt", back_populates="items")
 
@@ -75,7 +75,7 @@ class IncomeEntry(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     date = Column(Date, nullable=False)
     amount = Column(Numeric(10, 2), nullable=False)
-    source = Column(String(50), default="daily_sales")  # daily_sales/catering/other
+    source = Column(String(50), default="daily_sales")
     note = Column(Text, nullable=True)
     created_at = Column(DateTime, default=_utcnow)
 
@@ -108,12 +108,11 @@ SessionLocal = sessionmaker(
     autocommit=False,
     autoflush=False,
     bind=engine,
-    expire_on_commit=False,  # objects remain usable after session closes
+    expire_on_commit=False,
 )
 
 
 def init_db() -> None:
-    """Create all tables and apply SQLite pragmas."""
     with engine.connect() as conn:
         conn.execute(text("PRAGMA journal_mode=WAL"))
         conn.execute(text("PRAGMA foreign_keys=ON"))
@@ -135,7 +134,7 @@ def get_db() -> Generator[Session, None, None]:
 
 
 # ---------------------------------------------------------------------------
-# Constants
+# Constants & helpers
 # ---------------------------------------------------------------------------
 
 VALID_STOCK_CATEGORIES = {"meat", "bread", "produce", "dairy", "supplies", "beverages", "other"}
@@ -150,21 +149,50 @@ def _norm_receipt_cat(cat: Optional[str]) -> str:
     return cat.lower() if cat and cat.lower() in VALID_RECEIPT_CATEGORIES else "other"
 
 
+def _upsert_stock_in_session(db: Session, name: str, category: str, quantity: float) -> None:
+    """Add quantity to existing stock item or create a new one. Runs inside caller's session."""
+    key = name.strip().lower()
+    existing = db.query(Stock).filter(Stock.item_name == key).first()
+    if existing:
+        existing.current_quantity = float(existing.current_quantity) + quantity
+        existing.last_updated = _utcnow()
+    else:
+        db.add(Stock(
+            item_name=key,
+            category=category,
+            current_quantity=quantity,
+            unit="units",
+            min_threshold=0.0,
+        ))
+
+
 # ---------------------------------------------------------------------------
-# CRUD helpers
+# Core: save receipt + update stock in ONE transaction
 # ---------------------------------------------------------------------------
 
 def save_receipt(
     parsed: dict,
     image_path: Optional[str],
     telegram_msg_id: Optional[int],
-) -> Receipt:
-    """Persist a parsed receipt and create a linked expense row.
-    Returns a Receipt with items already loaded (safe to use after session closes).
+) -> dict:
+    """
+    Persist a parsed receipt, its items, a linked expense, and update stock —
+    all inside a single DB transaction. Returns a plain dict (safe across
+    threads and sessions):
+      {
+        "receipt_id": int,
+        "vendor": str,
+        "date": str,
+        "total": float,
+        "category": str,
+        "items": [{"name", "quantity", "unit_price", "total_price", "stock_category"}, ...],
+        "stock_updated": int,   # number of stock rows touched
+      }
     """
     import dateutil.parser as dp
 
     with get_db() as db:
+        # --- date ---
         date_val = datetime.date.today()
         try:
             if parsed.get("date"):
@@ -172,10 +200,10 @@ def save_receipt(
         except Exception:
             pass
 
-        # Validate total — reject $0 receipts only if no items either
         total = float(parsed.get("total") or 0)
         items_data = parsed.get("items") or []
 
+        # --- receipt row ---
         receipt = Receipt(
             telegram_msg_id=telegram_msg_id,
             image_path=image_path,
@@ -187,121 +215,233 @@ def save_receipt(
             raw_text=parsed.get("raw_text"),
         )
         db.add(receipt)
-        db.flush()  # get receipt.id
+        db.flush()  # assigns receipt.id
 
+        # --- item rows + stock update (same session!) ---
+        items_out = []
+        stock_updated = 0
         for item_data in items_data:
-            item = ReceiptItem(
-                receipt_id=receipt.id,
-                name=item_data.get("name") or "Unknown item",
-                quantity=float(item_data.get("quantity") or 1),
-                unit_price=float(item_data.get("unit_price") or 0),
-                total_price=float(item_data.get("total_price") or 0),
-                stock_category=_norm_stock_cat(item_data.get("stock_category")),
-            )
-            db.add(item)
+            name = item_data.get("name") or "Unknown item"
+            qty = float(item_data.get("quantity") or 1)
+            u_price = float(item_data.get("unit_price") or 0)
+            t_price = float(item_data.get("total_price") or 0)
+            s_cat = _norm_stock_cat(item_data.get("stock_category"))
 
-        expense = Expense(
+            db.add(ReceiptItem(
+                receipt_id=receipt.id,
+                name=name,
+                quantity=qty,
+                unit_price=u_price,
+                total_price=t_price,
+                stock_category=s_cat,
+            ))
+
+            # Stock update — SAME session, zero cross-session risk
+            _upsert_stock_in_session(db, name, s_cat, qty)
+            stock_updated += 1
+
+            items_out.append({
+                "name": name,
+                "quantity": qty,
+                "unit_price": u_price,
+                "total_price": t_price,
+                "stock_category": s_cat,
+            })
+
+        # --- expense row ---
+        db.add(Expense(
             receipt_id=receipt.id,
             date=date_val,
             amount=total,
             category=_norm_receipt_cat(parsed.get("category")),
             description=f"Receipt from {receipt.vendor}",
-        )
-        db.add(expense)
-        db.flush()
+        ))
 
-        # Force-load items while session is still open
-        db.refresh(receipt)
-        # Access items to trigger join-loaded population
-        _ = receipt.items
+        # Collect plain-dict result before session closes
+        result = {
+            "receipt_id": receipt.id,
+            "vendor": receipt.vendor,
+            "date": str(date_val),
+            "total": total,
+            "category": receipt.category,
+            "items": items_out,
+            "stock_updated": stock_updated,
+        }
 
-        return receipt
+    return result  # session already closed — plain dict is 100% safe
 
 
-def upsert_stock_from_receipt_items(items: list) -> None:
-    """Add receipt item quantities to stock; create entry if missing."""
+# ---------------------------------------------------------------------------
+# Stock helpers
+# ---------------------------------------------------------------------------
+
+def upsert_stock_from_dicts(items: list[dict]) -> int:
+    """
+    Standalone stock update from a list of plain dicts
+    (each must have 'name', 'quantity', 'stock_category').
+    Returns number of stock rows touched.
+    """
+    count = 0
     with get_db() as db:
         for item in items:
-            key = item.name.strip().lower()
-            existing = db.query(Stock).filter(Stock.item_name == key).first()
-            if existing:
-                existing.current_quantity = float(existing.current_quantity) + float(item.quantity)
-                existing.last_updated = _utcnow()
-            else:
-                db.add(Stock(
-                    item_name=key,
-                    category=item.stock_category,
-                    current_quantity=float(item.quantity),
-                    unit="units",
-                    min_threshold=0.0,
-                ))
+            _upsert_stock_in_session(
+                db,
+                item["name"],
+                item.get("stock_category", "other"),
+                float(item.get("quantity", 1)),
+            )
+            count += 1
+    return count
 
+
+def get_all_stock() -> list[dict]:
+    """Return all stock rows as plain dicts."""
+    with get_db() as db:
+        rows = db.query(Stock).order_by(Stock.category, Stock.item_name).all()
+        return [
+            {
+                "id": r.id,
+                "item_name": r.item_name,
+                "category": r.category,
+                "current_quantity": float(r.current_quantity),
+                "unit": r.unit,
+                "min_threshold": float(r.min_threshold),
+                "last_updated": r.last_updated,
+                "is_low": float(r.current_quantity) <= float(r.min_threshold) and float(r.min_threshold) > 0,
+            }
+            for r in rows
+        ]
+
+
+def get_low_stock_count() -> int:
+    with get_db() as db:
+        return db.query(func.count(Stock.id)).filter(
+            Stock.current_quantity <= Stock.min_threshold,
+            Stock.min_threshold > 0,
+        ).scalar()
+
+
+# ---------------------------------------------------------------------------
+# Receipts
+# ---------------------------------------------------------------------------
 
 def get_receipts(
     limit: int = 50,
     offset: int = 0,
     category: Optional[str] = None,
     search: Optional[str] = None,
-) -> list[Receipt]:
+) -> list[dict]:
     with get_db() as db:
-        q = db.query(Receipt).order_by(Receipt.date.desc(), Receipt.processed_at.desc())
+        q = db.query(Receipt).options(joinedload(Receipt.items)).order_by(
+            Receipt.date.desc(), Receipt.processed_at.desc()
+        )
         if category:
             q = q.filter(Receipt.category == category)
         if search:
             q = q.filter(Receipt.vendor.ilike(f"%{search}%"))
-        return q.offset(offset).limit(limit).all()
+        rows = q.offset(offset).limit(limit).all()
+        return [_receipt_to_dict(r) for r in rows]
 
 
-def get_receipt_by_id(receipt_id: int) -> Optional[Receipt]:
+def get_receipt_by_id(receipt_id: int) -> Optional[dict]:
     with get_db() as db:
-        return (
+        r = (
             db.query(Receipt)
             .options(joinedload(Receipt.items))
             .filter(Receipt.id == receipt_id)
             .first()
         )
+        return _receipt_to_dict(r) if r else None
 
 
-def get_all_stock() -> list[Stock]:
-    with get_db() as db:
-        return db.query(Stock).order_by(Stock.category, Stock.item_name).all()
+def _receipt_to_dict(r: Receipt) -> dict:
+    return {
+        "id": r.id,
+        "vendor": r.vendor,
+        "date": r.date,
+        "total": float(r.total),
+        "tax": float(r.tax or 0),
+        "category": r.category,
+        "processed_at": r.processed_at,
+        "raw_text": r.raw_text,
+        "image_path": r.image_path,
+        "items": [
+            {
+                "id": i.id,
+                "name": i.name,
+                "quantity": float(i.quantity),
+                "unit_price": float(i.unit_price),
+                "total_price": float(i.total_price),
+                "stock_category": i.stock_category,
+            }
+            for i in (r.items or [])
+        ],
+    }
 
 
-def get_low_stock_items() -> list[Stock]:
-    with get_db() as db:
-        return db.query(Stock).filter(
-            Stock.current_quantity <= Stock.min_threshold,
-            Stock.min_threshold > 0,
-        ).all()
-
+# ---------------------------------------------------------------------------
+# Income
+# ---------------------------------------------------------------------------
 
 def add_income_entry(
     date: datetime.date,
     amount: float,
     source: str = "daily_sales",
     note: Optional[str] = None,
-) -> IncomeEntry:
+) -> dict:
     with get_db() as db:
         entry = IncomeEntry(date=date, amount=amount, source=source, note=note)
         db.add(entry)
         db.flush()
-        db.refresh(entry)
-        return entry
+        return {"id": entry.id, "date": str(date), "amount": amount, "source": source, "note": note}
 
 
-def get_income_entries(limit: int = 50, offset: int = 0) -> list[IncomeEntry]:
+def get_income_entries(limit: int = 50, offset: int = 0) -> list[dict]:
     with get_db() as db:
-        return (
+        rows = (
             db.query(IncomeEntry)
             .order_by(IncomeEntry.date.desc())
             .offset(offset)
             .limit(limit)
             .all()
         )
+        return [
+            {
+                "id": r.id,
+                "date": r.date,
+                "amount": float(r.amount),
+                "source": r.source,
+                "note": r.note,
+                "created_at": r.created_at,
+            }
+            for r in rows
+        ]
 
+
+# ---------------------------------------------------------------------------
+# Expenses
+# ---------------------------------------------------------------------------
+
+def get_recent_expenses(limit: int = 10) -> list[dict]:
+    with get_db() as db:
+        rows = db.query(Expense).order_by(Expense.date.desc()).limit(limit).all()
+        return [
+            {
+                "id": r.id,
+                "date": r.date,
+                "amount": float(r.amount),
+                "category": r.category,
+                "description": r.description,
+            }
+            for r in rows
+        ]
+
+
+# ---------------------------------------------------------------------------
+# Summary / Reports
+# ---------------------------------------------------------------------------
 
 def get_weekly_summary() -> dict:
-    """Revenue, expenses and profit for the last 7 days."""
     today = datetime.date.today()
     week_ago = today - datetime.timedelta(days=7)
 
@@ -333,7 +473,6 @@ def get_weekly_summary() -> dict:
 
 
 def get_monthly_pl(year: int, month: int) -> dict:
-    """P&L breakdown for a given month."""
     from calendar import monthrange
     first = datetime.date(year, month, 1)
     last = datetime.date(year, month, monthrange(year, month)[1])
@@ -366,27 +505,35 @@ def update_stock_quantity(
     item_name: str,
     quantity_delta: float,
     unit: Optional[str] = None,
+    create_if_missing: bool = False,
 ) -> Optional[dict]:
-    """Adjust stock level. Returns plain dict (safe after session close)."""
+    """Adjust stock quantity. Returns updated dict or None if not found."""
     key = item_name.strip().lower()
     with get_db() as db:
         item = db.query(Stock).filter(Stock.item_name == key).first()
         if not item:
-            return None
-        item.current_quantity = float(item.current_quantity) + quantity_delta
-        item.last_updated = _utcnow()
-        if unit:
-            item.unit = unit
-        db.flush()
-        # Return plain dict — no detached-object risk
+            if not create_if_missing:
+                return None
+            # Create new stock item
+            item = Stock(
+                item_name=key,
+                category="other",
+                current_quantity=max(0.0, quantity_delta),
+                unit=unit or "units",
+                min_threshold=0.0,
+            )
+            db.add(item)
+            db.flush()
+        else:
+            item.current_quantity = float(item.current_quantity) + quantity_delta
+            item.last_updated = _utcnow()
+            if unit:
+                item.unit = unit
+            db.flush()
+
         return {
             "id": item.id,
             "item_name": item.item_name,
             "current_quantity": float(item.current_quantity),
             "unit": item.unit,
         }
-
-
-def get_recent_expenses(limit: int = 10) -> list[Expense]:
-    with get_db() as db:
-        return db.query(Expense).order_by(Expense.date.desc()).limit(limit).all()

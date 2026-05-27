@@ -32,13 +32,15 @@
           </dd>
 
           <dt class="col-5 text-muted">Tax</dt>
-          <dd class="col-7">${{ "%.2f"|format(receipt.tax|float) }}</dd>
+          <dd class="col-7">${{ "%.2f"|format(receipt.tax) }}</dd>
 
           <dt class="col-5 text-muted">Total</dt>
-          <dd class="col-7 fw-bold fs-6 text-success">${{ "%.2f"|format(receipt.total|float) }}</dd>
+          <dd class="col-7 fw-bold fs-6 text-success">${{ "%.2f"|format(receipt.total) }}</dd>
 
           <dt class="col-5 text-muted">Processed</dt>
-          <dd class="col-7 text-muted">{{ receipt.processed_at.strftime('%Y-%m-%d %H:%M') if receipt.processed_at else '—' }}</dd>
+          <dd class="col-7 text-muted">
+            {{ receipt.processed_at.strftime('%Y-%m-%d %H:%M') if receipt.processed_at else '—' }}
+          </dd>
 
           {% if receipt.image_path %}
           <dt class="col-5 text-muted">Image</dt>
@@ -73,15 +75,15 @@
               <td class="fw-semibold">{{ item.name }}</td>
               <td><span class="badge bg-info text-dark">{{ item.stock_category }}</span></td>
               <td class="text-center">{{ item.quantity }}</td>
-              <td class="text-end">${{ "%.2f"|format(item.unit_price|float) }}</td>
-              <td class="text-end fw-semibold">${{ "%.2f"|format(item.total_price|float) }}</td>
+              <td class="text-end">${{ "%.2f"|format(item.unit_price) }}</td>
+              <td class="text-end fw-semibold">${{ "%.2f"|format(item.total_price) }}</td>
             </tr>
             {% endfor %}
           </tbody>
           <tfoot class="table-light">
             <tr>
               <td colspan="4" class="text-end fw-semibold">Total</td>
-              <td class="text-end fw-bold">${{ "%.2f"|format(receipt.total|float) }}</td>
+              <td class="text-end fw-bold">${{ "%.2f"|format(receipt.total) }}</td>
             </tr>
           </tfoot>
         </table>

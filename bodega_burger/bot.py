@@ -15,7 +15,6 @@ from __future__ import annotations
 import asyncio
 import datetime
 import logging
-import os
 from pathlib import Path
 
 from telegram import Update
@@ -33,14 +32,12 @@ from config import RECEIPT_IMAGES_DIR, TELEGRAM_BOT_TOKEN
 from database import (
     add_income_entry,
     get_all_stock,
-    get_low_stock_items,
+    get_low_stock_count,
     get_monthly_pl,
-    get_receipt_by_id,
     get_recent_expenses,
     get_weekly_summary,
     init_db,
     save_receipt,
-    upsert_stock_from_receipt_items,
 )
 
 logging.basicConfig(
@@ -67,7 +64,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         "<b>Welcome to Bodega Burger Manager</b>\n\n"
         "Send a <b>receipt photo</b> and I'll parse it automatically.\n\n"
         "<b>Commands:</b>\n"
-        "/summary — Weekly revenue, expenses & profit\n"
+        "/summary — Weekly revenue, expenses &amp; profit\n"
         "/stock — Current inventory\n"
         "/income &lt;amount&gt; [note] — Record sales\n"
         "/expenses — Last 10 expenses\n"
@@ -78,15 +75,9 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    help_text = await asyncio.to_thread(
-        generate_chat_response,
-        "Generate a concise help message listing all available bot commands and what they do.",
-        "List all commands for the Bodega Burger restaurant management bot with brief descriptions.",
-    )
-    # Prepend static command list in case AI response is cut
     static = (
         "<b>Bodega Burger Bot — Commands</b>\n\n"
-        "/start — Welcome & quick guide\n"
+        "/start — Welcome &amp; quick guide\n"
         "/summary — Weekly KPIs\n"
         "/stock — Inventory status\n"
         "/income 1250.50 [note] — Log daily sales\n"
@@ -94,7 +85,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "/report — Monthly P&amp;L\n"
         "/help — This message\n\n"
         "<b>Receipt Processing:</b>\n"
-        "Just send any receipt photo — I'll extract items, update stock &amp; log the expense automatically.\n"
+        "Just send any receipt photo — I'll extract items, "
+        "update stock &amp; log the expense automatically.\n"
     )
     await update.message.reply_text(static, parse_mode=ParseMode.HTML)
 
@@ -117,24 +109,27 @@ async def summary_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 async def stock_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     items = await asyncio.to_thread(get_all_stock)
-    low = await asyncio.to_thread(get_low_stock_items)
-    low_ids = {i.id for i in low}
 
     if not items:
-        await update.message.reply_text("No stock items recorded yet. Upload receipt photos to populate inventory.")
+        await update.message.reply_text(
+            "No stock items yet. Send receipt photos to populate inventory."
+        )
         return
 
     lines = ["<b>Current Inventory</b>\n"]
     current_cat = None
     for item in items:
-        if item.category != current_cat:
-            current_cat = item.category
+        if item["category"] != current_cat:
+            current_cat = item["category"]
             lines.append(f"\n<b>{current_cat.upper()}</b>")
-        alert = " ⚠️ LOW" if item.id in low_ids else ""
-        lines.append(f"  {item.item_name}: {float(item.current_quantity):.1f} {item.unit}{alert}")
+        alert = " ⚠️ LOW" if item["is_low"] else ""
+        lines.append(
+            f"  {item['item_name']}: {item['current_quantity']:.1f} {item['unit']}{alert}"
+        )
 
-    if low:
-        lines.append(f"\n⚠️ {len(low)} item(s) below minimum threshold")
+    low_count = sum(1 for i in items if i["is_low"])
+    if low_count:
+        lines.append(f"\n⚠️ {low_count} item(s) below minimum threshold")
 
     await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.HTML)
 
@@ -156,8 +151,7 @@ async def income_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     note = " ".join(args[1:]) if len(args) > 1 else None
     today = datetime.date.today()
-
-    await asyncio.to_thread(add_income_entry, today, amount, "daily_sales", note)
+    entry = await asyncio.to_thread(add_income_entry, today, amount, "daily_sales", note)
 
     text = (
         f"Income recorded!\n"
@@ -177,8 +171,9 @@ async def expenses_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     lines = ["<b>Last 10 Expenses</b>\n"]
     for exp in expenses:
-        lines.append(f"{exp.date} | {exp.category:12} | {_money(float(exp.amount))} | {exp.description or ''}")
-
+        lines.append(
+            f"{exp['date']} | {exp['category']:12} | {_money(exp['amount'])} | {exp['description'] or ''}"
+        )
     await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.HTML)
 
 
@@ -204,43 +199,49 @@ async def report_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 
 # ---------------------------------------------------------------------------
-# Photo handler — core receipt processing
+# Photo handler — receipt processing
 # ---------------------------------------------------------------------------
 
 async def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    msg = await update.message.reply_text("Processing receipt, please wait...")
+    msg = await update.message.reply_text("📄 Processing receipt, please wait...")
 
     # Download highest-res photo
     photo = update.message.photo[-1]
     tg_file = await context.bot.get_file(photo.file_id)
-
     image_path = str(Path(RECEIPT_IMAGES_DIR) / f"{photo.file_id}.jpg")
     await tg_file.download_to_drive(image_path)
 
     try:
-        # Parse receipt with claude-sonnet-4-6 (runs in thread — sync SDK)
+        # Parse with claude-sonnet-4-6 (vision)
         parsed, raw_text = await asyncio.to_thread(parse_receipt_image, image_path)
 
-        # Save to DB
-        receipt = await asyncio.to_thread(
+        # Save receipt + items + expense + update stock — all in ONE DB transaction
+        result = await asyncio.to_thread(
             save_receipt, parsed, image_path, update.message.message_id
         )
 
-        # Update stock
-        await asyncio.to_thread(upsert_stock_from_receipt_items, receipt.items)
+        logger.info(
+            "Receipt #%d saved: vendor=%s total=%.2f items=%d stock_rows=%d",
+            result["receipt_id"],
+            result["vendor"],
+            result["total"],
+            len(result["items"]),
+            result["stock_updated"],
+        )
 
-        # Reply with formatted summary
+        # Build reply
         summary = format_receipt_summary(parsed)
-        await msg.edit_text(summary, parse_mode=ParseMode.HTML)
+        stock_line = f"\n📦 <b>{result['stock_updated']} inventory item(s) updated.</b>"
+        await msg.edit_text(summary + stock_line, parse_mode=ParseMode.HTML)
 
     except ValueError as e:
         logger.warning("JSON parse error: %s", e)
         await msg.edit_text(
-            "Could not read the receipt. Please try a clearer photo with better lighting."
+            "❌ Could not read the receipt. Try a clearer photo with better lighting."
         )
     except Exception as e:
         logger.error("Receipt processing error: %s", e, exc_info=True)
-        await msg.edit_text("An error occurred while processing the receipt. Please try again.")
+        await msg.edit_text("❌ An error occurred while processing the receipt. Please try again.")
 
 
 # ---------------------------------------------------------------------------
@@ -263,8 +264,7 @@ def build_application() -> Application:
 def main() -> None:
     init_db()
     logger.info("Starting Bodega Burger Telegram bot...")
-    app = build_application()
-    app.run_polling(drop_pending_updates=True)
+    build_application().run_polling(drop_pending_updates=True)
 
 
 if __name__ == "__main__":

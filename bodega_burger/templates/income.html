@@ -29,7 +29,7 @@
               <td>{{ entry.date }}</td>
               <td><span class="badge bg-success">{{ entry.source.replace('_', ' ')|title }}</span></td>
               <td class="text-muted small">{{ entry.note or '—' }}</td>
-              <td class="text-end fw-bold text-success">${{ "%.2f"|format(entry.amount|float) }}</td>
+              <td class="text-end fw-bold text-success">${{ "%.2f"|format(entry.amount) }}</td>
             </tr>
             {% endfor %}
           </tbody>

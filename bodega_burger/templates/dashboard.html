@@ -141,7 +141,7 @@
               <td>{{ r.date }}</td>
               <td>{{ r.vendor }}</td>
               <td><span class="badge bg-secondary">{{ r.category }}</span></td>
-              <td class="text-end fw-semibold">${{ "%.2f"|format(r.total|float) }}</td>
+              <td class="text-end fw-semibold">${{ "%.2f"|format(r.total) }}</td>
             </tr>
             {% endfor %}
           </tbody>
